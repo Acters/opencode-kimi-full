@@ -54,7 +54,7 @@ type KimiHookInput = {
 const INTERNAL_PROMPT_CACHE_KEY_HEADER = "x-opencode-kimi-prompt-cache-key"
 const INTERNAL_REASONING_EFFORT_HEADER = "x-opencode-kimi-reasoning-effort"
 const INTERNAL_THINKING_TYPE_HEADER = "x-opencode-kimi-thinking-type"
-const STREAM_INACTIVITY_TIMEOUT_MS = 60_000
+const STREAM_INACTIVITY_TIMEOUT_MS = 300_000
 const CHAT_REQUEST_TIMEOUT_MS = 60_000
 
 /**
@@ -299,16 +299,31 @@ const plugin: Plugin = async ({ client }) => {
     return cachedDiscovery
   }
 
-  const refreshAuth = async (auth: OAuthAuth) => {
-    const tokens = await refreshToken(auth.refresh)
-    const next: OAuthAuth = {
-      type: "oauth",
-      refresh: tokens.refresh_token,
-      access: tokens.access_token,
-      expires: Date.now() + tokens.expires_in * 1000,
+  // Serialize concurrent refresh attempts so multiple requests don't race
+  // each other to the OAuth endpoint with the same refresh token.
+  let refreshPromise: Promise<OAuthAuth> | undefined
+
+  const refreshAuth = async (auth: OAuthAuth): Promise<OAuthAuth> => {
+    if (refreshPromise) {
+      console.error("[kimi] refreshAuth: waiting for in-flight refresh")
+      return refreshPromise
     }
-    await persistAuth(next)
-    return next
+    refreshPromise = (async () => {
+      try {
+        const tokens = await refreshToken(auth.refresh)
+        const next: OAuthAuth = {
+          type: "oauth",
+          refresh: tokens.refresh_token,
+          access: tokens.access_token,
+          expires: Date.now() + tokens.expires_in * 1000,
+        }
+        await persistAuth(next)
+        return next
+      } finally {
+        refreshPromise = undefined
+      }
+    })()
+    return refreshPromise
   }
 
   // --- return hooks ----------------------------------------------------------

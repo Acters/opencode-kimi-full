@@ -27,7 +27,7 @@ export type TokenResponse = {
 
 const REFRESH_RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504])
 const REFRESH_MAX_RETRIES = 3
-const REFRESH_TIMEOUT_MS = 1000
+const REFRESH_TIMEOUT_MS = 5000
 const LIST_MODELS_TIMEOUT_MS = 5000
 
 function formBody(params: Record<string, string>): string {
