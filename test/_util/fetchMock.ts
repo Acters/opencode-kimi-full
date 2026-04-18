@@ -18,6 +18,11 @@ export function installFetchMock(responder: Responder) {
   const calls: FetchCall[] = []
   const original = globalThis.fetch
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.signal?.aborted) {
+      const err = new Error("The operation was aborted.")
+      err.name = "AbortError"
+      throw err
+    }
     const request = input instanceof Request ? input : undefined
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url
     const headers: Record<string, string> = {}

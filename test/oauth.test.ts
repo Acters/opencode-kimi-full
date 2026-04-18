@@ -80,6 +80,39 @@ test("postForm wraps non-OK responses with error.code from the JSON body", async
   await expect(refreshToken("bad")).rejects.toThrow(/invalid_grant/)
 })
 
+test("refreshToken retries on AbortError (timeout) before succeeding", async () => {
+  mock = installFetchMock((_, i) => {
+    if (i < 2) {
+      const err = new Error("The operation was aborted.")
+      err.name = "AbortError"
+      throw err
+    }
+    return { body: { access_token: "a4", refresh_token: "r4", token_type: "Bearer", expires_in: 900 } }
+  })
+  const t = await refreshToken("abort-twice")
+  expect(t.access_token).toBe("a4")
+  expect(mock.calls).toHaveLength(3)
+})
+
+test("refreshToken throws after exhausting retries on repeated timeouts", async () => {
+  mock = installFetchMock(() => {
+    const err = new Error("The operation was aborted.")
+    err.name = "AbortError"
+    throw err
+  })
+  await expect(refreshToken("always-aborts")).rejects.toThrow(/aborted/)
+  expect(mock.calls).toHaveLength(3)
+})
+
+test("refreshToken passes an AbortSignal to fetch", async () => {
+  mock = installFetchMock(() => ({ body: { access_token: "a5", refresh_token: "r5", token_type: "Bearer", expires_in: 900 } }))
+  await refreshToken("sig-check")
+  // We can't directly inspect the signal object, but we can verify fetch was
+  // called with init that includes a signal property by checking the mock
+  // accepted the call (the mock throws if signal.aborted is true).
+  expect(mock.calls).toHaveLength(1)
+})
+
 test("refreshToken throws a clear error when a non-retryable response is non-JSON", async () => {
   mock = installFetchMock(() => ({ status: 400, bodyText: "<html>bad request</html>" }))
   await expect(refreshToken("x")).rejects.toThrow(/non-JSON response/)

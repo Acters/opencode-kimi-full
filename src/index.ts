@@ -54,6 +54,51 @@ type KimiHookInput = {
 const INTERNAL_PROMPT_CACHE_KEY_HEADER = "x-opencode-kimi-prompt-cache-key"
 const INTERNAL_REASONING_EFFORT_HEADER = "x-opencode-kimi-reasoning-effort"
 const INTERNAL_THINKING_TYPE_HEADER = "x-opencode-kimi-thinking-type"
+const STREAM_INACTIVITY_TIMEOUT_MS = 60_000
+
+/**
+ * Wraps a ReadableStream with an inactivity timeout. If no chunk arrives
+ * within `timeoutMs`, the stream errors out. This prevents the UI from
+ * hanging forever when the server keeps the connection open but stops
+ * sending SSE chunks mid-generation.
+ */
+function withInactivityTimeout<T>(stream: ReadableStream<T>, timeoutMs: number): ReadableStream<T> {
+  const reader = stream.getReader()
+  let timeoutId: ReturnType<typeof setTimeout>
+
+  const resetTimeout = (controller: ReadableStreamDefaultController<T>) => {
+    clearTimeout(timeoutId)
+    timeoutId = setTimeout(() => {
+      reader.releaseLock()
+      controller.error(new Error(`kimi stream: no data for ${timeoutMs}ms — aborting`))
+    }, timeoutMs)
+  }
+
+  return new ReadableStream({
+    start(controller) {
+      resetTimeout(controller)
+    },
+    async pull(controller) {
+      try {
+        const result = await reader.read()
+        clearTimeout(timeoutId)
+        if (result.done) {
+          controller.close()
+        } else {
+          controller.enqueue(result.value)
+          resetTimeout(controller)
+        }
+      } catch (err) {
+        clearTimeout(timeoutId)
+        controller.error(err)
+      }
+    },
+    cancel(reason) {
+      clearTimeout(timeoutId)
+      reader.cancel(reason)
+    },
+  })
+}
 
 function isOAuthAuth(value: unknown): value is OAuthAuth {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
@@ -429,6 +474,16 @@ const plugin: Plugin = async ({ client }) => {
               // nominal expiry. Force a refresh and retry exactly once.
               auth = await ensureFresh(true)
               res = await doRequest(auth)
+            }
+            // Guard against zombie SSE streams: if the server keeps the
+            // connection open but stops sending chunks, error out after a
+            // period of inactivity rather than hanging the UI forever.
+            if (res.body) {
+              res = new Response(withInactivityTimeout(res.body, STREAM_INACTIVITY_TIMEOUT_MS), {
+                status: res.status,
+                statusText: res.statusText,
+                headers: res.headers,
+              })
             }
             return res
           },
