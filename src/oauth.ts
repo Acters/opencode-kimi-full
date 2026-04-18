@@ -104,7 +104,10 @@ export async function refreshToken(refresh: string): Promise<TokenResponse> {
   let lastError: unknown
   for (let attempt = 0; attempt < REFRESH_MAX_RETRIES; attempt++) {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS)
+    const timeout = setTimeout(() => {
+      console.error(`[kimi] refreshToken timeout: no response for ${REFRESH_TIMEOUT_MS}ms — aborting attempt ${attempt + 1}`)
+      controller.abort()
+    }, REFRESH_TIMEOUT_MS)
     try {
       const res = await fetch(OAUTH_TOKEN_URL, {
         method: "POST",
@@ -203,7 +206,10 @@ export type KimiModelInfo = {
 export async function listModels(accessToken: string): Promise<KimiModelInfo[]> {
   console.error("[kimi] listModels: fetching models")
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), LIST_MODELS_TIMEOUT_MS)
+  const timeout = setTimeout(() => {
+    console.error(`[kimi] listModels timeout: no response for ${LIST_MODELS_TIMEOUT_MS}ms — aborting`)
+    controller.abort()
+  }, LIST_MODELS_TIMEOUT_MS)
   try {
     const res = await fetch(`${API_BASE_URL}/models`, {
       headers: {

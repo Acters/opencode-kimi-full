@@ -70,6 +70,7 @@ function withInactivityTimeout<T>(stream: ReadableStream<T>, timeoutMs: number):
   const resetTimeout = (controller: ReadableStreamDefaultController<T>) => {
     clearTimeout(timeoutId)
     timeoutId = setTimeout(() => {
+      console.error(`[kimi] SSE inactivity timeout: no data for ${timeoutMs}ms — aborting stream`)
       reader.releaseLock()
       controller.error(new Error(`kimi stream: no data for ${timeoutMs}ms — aborting`))
     }, timeoutMs)
@@ -476,7 +477,10 @@ const plugin: Plugin = async ({ client }) => {
 
               console.error("[kimi] doRequest: calling fetch")
               const controller = new AbortController()
-              const timeout = setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS)
+              const timeout = setTimeout(() => {
+                console.error(`[kimi] chat request TTFB timeout: no response headers for ${CHAT_REQUEST_TIMEOUT_MS}ms — aborting`)
+                controller.abort()
+              }, CHAT_REQUEST_TIMEOUT_MS)
               try {
                 const res = await fetch(input, { ...newInit, headers, signal: controller.signal })
                 clearTimeout(timeout)
