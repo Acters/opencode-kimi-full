@@ -100,7 +100,7 @@ export async function pollDeviceToken(device: DeviceAuth): Promise<TokenResponse
 }
 
 export async function refreshToken(refresh: string): Promise<TokenResponse> {
-  console.log("[kimi] refreshToken: starting, attempt 1")
+  console.error("[kimi] refreshToken: starting, attempt 1")
   let lastError: unknown
   for (let attempt = 0; attempt < REFRESH_MAX_RETRIES; attempt++) {
     const controller = new AbortController()
@@ -159,11 +159,11 @@ export async function refreshToken(refresh: string): Promise<TokenResponse> {
       }
 
       clearTimeout(timeout)
-      console.log("[kimi] refreshToken: success")
+      console.error("[kimi] refreshToken: success")
       return json as TokenResponse
     } catch (err) {
       clearTimeout(timeout)
-      console.log("[kimi] refreshToken: attempt", attempt + 1, "failed:", (err as Error).message)
+      console.error("[kimi] refreshToken: attempt", attempt + 1, "failed:", (err as Error).message)
       const status = (err as { status?: number }).status
       const retryable = status === undefined || REFRESH_RETRYABLE_STATUSES.has(status)
       lastError = err
@@ -201,7 +201,7 @@ export type KimiModelInfo = {
  * (see `refresh_managed_models` in platforms.py). We do the same.
  */
 export async function listModels(accessToken: string): Promise<KimiModelInfo[]> {
-  console.log("[kimi] listModels: fetching models")
+  console.error("[kimi] listModels: fetching models")
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), LIST_MODELS_TIMEOUT_MS)
   try {
@@ -214,7 +214,7 @@ export async function listModels(accessToken: string): Promise<KimiModelInfo[]> 
       signal: controller.signal,
     })
     clearTimeout(timeout)
-    console.log("[kimi] listModels: got response", res.status)
+    console.error("[kimi] listModels: got response", res.status)
     const text = await res.text()
   if (!res.ok) {
     const err = new Error(`kimi list-models ${res.status}: ${text.slice(0, 200)}`) as Error & { status?: number }
