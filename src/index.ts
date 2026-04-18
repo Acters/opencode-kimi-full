@@ -522,7 +522,8 @@ const plugin: Plugin = async ({ client }) => {
             // Guard against zombie SSE streams: if the server keeps the
             // connection open but stops sending chunks, error out after a
             // period of inactivity rather than hanging the UI forever.
-            if (res.body) {
+            // Can be disabled via env var for debugging.
+            if (res.body && !process.env.KIMI_DISABLE_STREAM_TIMEOUT) {
               console.error("[kimi] fetch wrapper: wrapping stream with inactivity timeout")
               res = new Response(withInactivityTimeout(res.body, STREAM_INACTIVITY_TIMEOUT_MS), {
                 status: res.status,
