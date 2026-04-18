@@ -55,6 +55,7 @@ const INTERNAL_PROMPT_CACHE_KEY_HEADER = "x-opencode-kimi-prompt-cache-key"
 const INTERNAL_REASONING_EFFORT_HEADER = "x-opencode-kimi-reasoning-effort"
 const INTERNAL_THINKING_TYPE_HEADER = "x-opencode-kimi-thinking-type"
 const STREAM_INACTIVITY_TIMEOUT_MS = 60_000
+const CHAT_REQUEST_TIMEOUT_MS = 60_000
 
 /**
  * Wraps a ReadableStream with an inactivity timeout. If no chunk arrives
@@ -357,7 +358,9 @@ const plugin: Plugin = async ({ client }) => {
           // (`refresh`/`access`/`expires`) on `client.auth.set`, so discovery
           // cannot live durably in auth.json across refresh writes. Cache it in
           // this loader instance instead, and repopulate lazily on startup.
+          console.log("[kimi] discoverModelInfo: calling listModels")
           discovery = rememberDiscovery(pickModelInfo(await listModels(access)))
+          console.log("[kimi] discoverModelInfo: done, model_id =", discovery.model_id)
           return discovery
         }
 
@@ -379,13 +382,20 @@ const plugin: Plugin = async ({ client }) => {
         }
 
         const ensureFresh = async (force = false): Promise<OAuthAuth & ModelDiscovery> => {
+          console.log("[kimi] ensureFresh: reading auth")
           const current = (await readAuth()) as (OAuthAuth & Partial<ModelDiscovery>) | undefined
+          console.log("[kimi] ensureFresh: auth read, type =", current?.type)
           if (!current || current.type !== "oauth")
             throw new Error(
               "kimi-for-coding-oauth: not logged in — run `opencode auth login kimi-for-coding-oauth`",
             )
-          if (!force && !isExpiring(current)) return ensureDiscovered(current)
+          if (!force && !isExpiring(current)) {
+            console.log("[kimi] ensureFresh: token still fresh, ensuring discovered")
+            return ensureDiscovered(current)
+          }
+          console.log("[kimi] ensureFresh: token expiring, calling refreshAuth")
           const next = await refreshAuth(current)
+          console.log("[kimi] ensureFresh: refresh done")
           // kimi-cli re-runs `refresh_managed_models` on every successful
           // refresh — we mirror that so entitlement changes (e.g. an
           // account gaining/losing K2.6 access) are picked up without a
@@ -464,14 +474,29 @@ const plugin: Plugin = async ({ client }) => {
                 }
               }
 
-              return fetch(input, { ...newInit, headers })
+              console.log("[kimi] doRequest: calling fetch")
+              const controller = new AbortController()
+              const timeout = setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS)
+              try {
+                const res = await fetch(input, { ...newInit, headers, signal: controller.signal })
+                clearTimeout(timeout)
+                console.log("[kimi] doRequest: fetch returned status", res.status)
+                return res
+              } catch (err) {
+                clearTimeout(timeout)
+                console.log("[kimi] doRequest: fetch error", err)
+                throw err
+              }
             }
 
+            console.log("[kimi] fetch wrapper: calling ensureFresh")
             let auth = await ensureFresh()
+            console.log("[kimi] fetch wrapper: ensureFresh done")
             let res = await doRequest(auth)
             if (res.status === 401) {
               // Token might have been invalidated server-side before its
               // nominal expiry. Force a refresh and retry exactly once.
+              console.log("[kimi] fetch wrapper: got 401, retrying with fresh token")
               auth = await ensureFresh(true)
               res = await doRequest(auth)
             }
@@ -479,12 +504,14 @@ const plugin: Plugin = async ({ client }) => {
             // connection open but stops sending chunks, error out after a
             // period of inactivity rather than hanging the UI forever.
             if (res.body) {
+              console.log("[kimi] fetch wrapper: wrapping stream with inactivity timeout")
               res = new Response(withInactivityTimeout(res.body, STREAM_INACTIVITY_TIMEOUT_MS), {
                 status: res.status,
                 statusText: res.statusText,
                 headers: res.headers,
               })
             }
+            console.log("[kimi] fetch wrapper: returning response")
             return res
           },
         }
