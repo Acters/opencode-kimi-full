@@ -333,6 +333,10 @@ const plugin: Plugin = async ({ client }) => {
                     if (hasKimiBodyFields(kimiBodyFields)) {
                       applyKimiBodyFields(parsed as Record<string, unknown>, kimiBodyFields)
                     }
+                    // Kimi's backend requires temperature to be exactly 0.6 for
+                    // kimi-for-coding. Ensure it is present so the API doesn't reject
+                    // the request when the SDK or a variant config omits it.
+                    ;(parsed as Record<string, unknown>).temperature = 0.6
                     newInit = { ...init, body: JSON.stringify(parsed) }
                   }
                 } catch {

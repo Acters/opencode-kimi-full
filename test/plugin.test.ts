@@ -302,6 +302,7 @@ test("auth.loader: injects default thinking via private headers and strips them 
     model: MODEL_ID,
     messages: [],
     prompt_cache_key: "sess-default",
+    temperature: 0.6,
     thinking: { type: "enabled" },
   })
 })
@@ -333,8 +334,69 @@ test("auth.loader: injects selected reasoning_effort from private headers into t
     messages: [],
     prompt_cache_key: "sess-high",
     reasoning_effort: "high",
+    temperature: 0.6,
     thinking: { type: "enabled" },
   })
+})
+
+test("auth.loader: auto mode ensures temperature=0.6 when thinking is omitted", async () => {
+  const { hooks } = await getHooks()
+  const { output: headerOutput } = await callHeaders(hooks["chat.headers"]!, {
+    sessionID: "sess-auto",
+    variants: { auto: { reasoning_effort: "auto" } },
+    variant: "auto",
+  })
+  mock = installFetchMock((call) => {
+    if (call.url.endsWith("/coding/v1/models")) {
+      return { body: { data: [{ id: MODEL_ID, context_length: 262144 }] } }
+    }
+    return { body: { ok: true } }
+  })
+  const { fetch: f } = await getLoaderFetch(async () => validAuth())
+  await f("https://api.kimi.com/coding/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...headerOutput.headers,
+    },
+    body: JSON.stringify({ model: MODEL_ID, messages: [] }),
+  })
+  const sent = JSON.parse(mock.calls[1]!.body as string)
+  // Auto omits thinking and reasoning_effort, but the API requires
+  // temperature to be exactly 0.6 or it rejects with "invalid temperature".
+  expect(sent.temperature).toBe(0.6)
+  expect(sent.prompt_cache_key).toBe("sess-auto")
+  expect(sent.thinking).toBeUndefined()
+  expect(sent.reasoning_effort).toBeUndefined()
+})
+
+test("auth.loader: all variants ensure temperature=0.6", async () => {
+  const { hooks } = await getHooks()
+  const { output: headerOutput } = await callHeaders(hooks["chat.headers"]!, {
+    sessionID: "sess-off",
+    variants: { off: { reasoning_effort: "off" } },
+    variant: "off",
+  })
+  mock = installFetchMock((call) => {
+    if (call.url.endsWith("/coding/v1/models")) {
+      return { body: { data: [{ id: MODEL_ID, context_length: 262144 }] } }
+    }
+    return { body: { ok: true } }
+  })
+  const { fetch: f } = await getLoaderFetch(async () => validAuth())
+  await f("https://api.kimi.com/coding/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...headerOutput.headers,
+    },
+    body: JSON.stringify({ model: MODEL_ID, messages: [], temperature: 0.7 }),
+  })
+  const sent = JSON.parse(mock.calls[1]!.body as string)
+  // The API requires exactly 0.6; the plugin normalizes it even when
+  // the SDK or config sends a different value.
+  expect(sent.temperature).toBe(0.6)
+  expect(sent.thinking).toEqual({ type: "disabled" })
 })
 
 test("auth.loader: refreshes when expiry is within safety window", async () => {
