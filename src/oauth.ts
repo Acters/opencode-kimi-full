@@ -8,6 +8,7 @@ import {
   OAUTH_TOKEN_URL,
 } from "./constants.ts"
 import { kimiHeaders } from "./headers.ts"
+import { log } from "./log.ts"
 
 export type DeviceAuth = {
   device_code: string
@@ -27,6 +28,8 @@ export type TokenResponse = {
 
 const REFRESH_RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504])
 const REFRESH_MAX_RETRIES = 3
+const REFRESH_TIMEOUT_MS = 5000
+const LIST_MODELS_TIMEOUT_MS = 5000
 
 function formBody(params: Record<string, string>): string {
   return new URLSearchParams(params).toString()
@@ -98,8 +101,14 @@ export async function pollDeviceToken(device: DeviceAuth): Promise<TokenResponse
 }
 
 export async function refreshToken(refresh: string): Promise<TokenResponse> {
+  log("[kimi] refreshToken: starting, attempt 1")
   let lastError: unknown
   for (let attempt = 0; attempt < REFRESH_MAX_RETRIES; attempt++) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => {
+      log(`[kimi] refreshToken timeout: no response for ${REFRESH_TIMEOUT_MS}ms — aborting attempt ${attempt + 1}`)
+      controller.abort()
+    }, REFRESH_TIMEOUT_MS)
     try {
       const res = await fetch(OAUTH_TOKEN_URL, {
         method: "POST",
@@ -113,7 +122,9 @@ export async function refreshToken(refresh: string): Promise<TokenResponse> {
           refresh_token: refresh,
           grant_type: OAUTH_REFRESH_GRANT,
         }),
+        signal: controller.signal,
       })
+      clearTimeout(timeout)
       const text = await res.text()
       let json: any = {}
       try {
@@ -151,8 +162,12 @@ export async function refreshToken(refresh: string): Promise<TokenResponse> {
         throw err
       }
 
+      clearTimeout(timeout)
+      log("[kimi] refreshToken: success")
       return json as TokenResponse
     } catch (err) {
+      clearTimeout(timeout)
+      log("[kimi] refreshToken: attempt", attempt + 1, "failed:", (err as Error).message)
       const status = (err as { status?: number }).status
       const retryable = status === undefined || REFRESH_RETRYABLE_STATUSES.has(status)
       lastError = err
@@ -190,14 +205,24 @@ export type KimiModelInfo = {
  * (see `refresh_managed_models` in platforms.py). We do the same.
  */
 export async function listModels(accessToken: string): Promise<KimiModelInfo[]> {
-  const res = await fetch(`${API_BASE_URL}/models`, {
-    headers: {
-      ...kimiHeaders(),
-      Authorization: `Bearer ${accessToken}`,
-      Accept: "application/json",
-    },
-  })
-  const text = await res.text()
+  log("[kimi] listModels: fetching models")
+  const controller = new AbortController()
+  const timeout = setTimeout(() => {
+    log(`[kimi] listModels timeout: no response for ${LIST_MODELS_TIMEOUT_MS}ms — aborting`)
+    controller.abort()
+  }, LIST_MODELS_TIMEOUT_MS)
+  try {
+    const res = await fetch(`${API_BASE_URL}/models`, {
+      headers: {
+        ...kimiHeaders(),
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+    log("[kimi] listModels: got response", res.status)
+    const text = await res.text()
   if (!res.ok) {
     const err = new Error(`kimi list-models ${res.status}: ${text.slice(0, 200)}`) as Error & { status?: number }
     err.status = res.status
@@ -211,4 +236,8 @@ export async function listModels(accessToken: string): Promise<KimiModelInfo[]> 
   }
   const data = Array.isArray(json?.data) ? json.data : []
   return data.filter((m: any) => typeof m?.id === "string") as KimiModelInfo[]
+  } catch (err) {
+    clearTimeout(timeout)
+    throw err
+  }
 }
