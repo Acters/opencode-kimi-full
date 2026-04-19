@@ -19,6 +19,7 @@ function getStream() {
 }
 
 export function log(...args: unknown[]) {
+  if (!process.env.KIMI_LOG) return
   if (process.env.KIMI_LOG_STDERR) {
     console.error(...args)
     return
